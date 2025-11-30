@@ -1,0 +1,520 @@
+import React, { useState, useEffect } from 'react';
+import { Music, Copy, ExternalLink, AlertCircle, LogIn, Check } from 'lucide-react';
+
+export default function PlaylistGenerator() {
+  const [songList, setSongList] = useState('');
+  const [playlistName, setPlaylistName] = useState('');
+  const [platform, setPlatform] = useState('spotify');
+  const [generatedLinks, setGeneratedLinks] = useState([]);
+  const [showResults, setShowResults] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [accessToken, setAccessToken] = useState(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [creationStatus, setCreationStatus] = useState([]);
+
+  // Spotify credentials
+  const SPOTIFY_CLIENT_ID = '0703160cab2f44d1b203fe558f9de57f';
+  const SPOTIFY_CLIENT_SECRET = '51a561be6e6e428bbb52571b07099324';
+  
+  // YouTube credentials
+  const YOUTUBE_CLIENT_ID = '690518057226-3ssmo3irbqnbpr8irq62e6ifoeep35j5.apps.googleusercontent.com';
+  const YOUTUBE_CLIENT_SECRET = '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';
+  
+  const REDIRECT_URI = 'https://playlist-generator-vert.vercel.app';
+
+  useEffect(() => {
+    // Check for OAuth callback
+    const hash = window.location.hash;
+    const params = new URLSearchParams(window.location.search);
+    
+    if (hash) {
+      const token = new URLSearchParams(hash.substring(1)).get('access_token');
+      if (token) {
+        setAccessToken(token);
+        setIsAuthenticated(true);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+    
+    if (params.get('code')) {
+      const code = params.get('code');
+      if (platform === 'youtube') {
+        exchangeYouTubeCode(code);
+      }
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  const exchangeYouTubeCode = async (code) => {
+    try {
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: YOUTUBE_CLIENT_ID,
+          client_secret: YOUTUBE_CLIENT_SECRET,
+          redirect_uri: REDIRECT_URI,
+          grant_type: 'authorization_code'
+        })
+      });
+      const data = await response.json();
+      if (data.access_token) {
+        setAccessToken(data.access_token);
+        setIsAuthenticated(true);
+      }
+    } catch (error) {
+      console.error('Error exchanging code:', error);
+    }
+  };
+
+  const authenticateSpotify = () => {
+    const scopes = 'playlist-modify-public playlist-modify-private';
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}`;
+    window.location.href = authUrl;
+  };
+
+  const authenticateYouTube = () => {
+    const scopes = 'https://www.googleapis.com/auth/youtube';
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${YOUTUBE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline`;
+    window.location.href = authUrl;
+  };
+
+  const createSpotifyPlaylist = async () => {
+    setIsCreating(true);
+    setCreationStatus([]);
+    
+    try {
+      const songs = songList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+      
+      // Get user ID
+      setCreationStatus(prev => [...prev, 'Getting your Spotify profile...']);
+      const userResponse = await fetch('https://api.spotify.com/v1/me', {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      const userData = await userResponse.json();
+      
+      // Create playlist
+      setCreationStatus(prev => [...prev, 'Creating playlist...']);
+      const playlistResponse = await fetch(`https://api.spotify.com/v1/users/${userData.id}/playlists`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: playlistName || 'My Playlist',
+          description: 'Created with Playlist Generator',
+          public: false
+        })
+      });
+      const playlistData = await playlistResponse.json();
+      
+      // Search and add tracks
+      const trackUris = [];
+      for (const song of songs) {
+        setCreationStatus(prev => [...prev, `Searching for: ${song}`]);
+        const searchResponse = await fetch(
+          `https://api.spotify.com/v1/search?q=${encodeURIComponent(song)}&type=track&limit=1`,
+          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
+        const searchData = await searchResponse.json();
+        
+        if (searchData.tracks?.items?.[0]) {
+          trackUris.push(searchData.tracks.items[0].uri);
+          setCreationStatus(prev => [...prev, `✓ Found: ${song}`]);
+        } else {
+          setCreationStatus(prev => [...prev, `✗ Not found: ${song}`]);
+        }
+      }
+      
+      // Add tracks to playlist
+      if (trackUris.length > 0) {
+        setCreationStatus(prev => [...prev, `Adding ${trackUris.length} tracks to playlist...`]);
+        await fetch(`https://api.spotify.com/v1/playlists/${playlistData.id}/tracks`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ uris: trackUris })
+        });
+        
+        setCreationStatus(prev => [...prev, `✓ Playlist created successfully!`]);
+        setCreationStatus(prev => [...prev, `Open it here: ${playlistData.external_urls.spotify}`]);
+      }
+    } catch (error) {
+      setCreationStatus(prev => [...prev, `Error: ${error.message}`]);
+    }
+    
+    setIsCreating(false);
+  };
+
+  const createYouTubePlaylist = async () => {
+    setIsCreating(true);
+    setCreationStatus([]);
+    
+    try {
+      const songs = songList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+      
+      // Create playlist
+      setCreationStatus(prev => [...prev, 'Creating YouTube playlist...']);
+      const playlistResponse = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          snippet: {
+            title: playlistName || 'My Playlist',
+            description: 'Created with Playlist Generator'
+          },
+          status: { privacyStatus: 'private' }
+        })
+      });
+      const playlistData = await playlistResponse.json();
+      
+      // Search and add videos
+      for (const song of songs) {
+        setCreationStatus(prev => [...prev, `Searching for: ${song}`]);
+        const searchResponse = await fetch(
+          `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(song + ' music')}&type=video&videoCategoryId=10&maxResults=1&key=${YOUTUBE_CLIENT_ID}`,
+          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
+        const searchData = await searchResponse.json();
+        
+        if (searchData.items?.[0]) {
+          const videoId = searchData.items[0].id.videoId;
+          await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              snippet: {
+                playlistId: playlistData.id,
+                resourceId: {
+                  kind: 'youtube#video',
+                  videoId: videoId
+                }
+              }
+            })
+          });
+          setCreationStatus(prev => [...prev, `✓ Added: ${song}`]);
+        } else {
+          setCreationStatus(prev => [...prev, `✗ Not found: ${song}`]);
+        }
+      }
+      
+      setCreationStatus(prev => [...prev, `✓ Playlist created successfully!`]);
+    } catch (error) {
+      setCreationStatus(prev => [...prev, `Error: ${error.message}`]);
+    }
+    
+    setIsCreating(false);
+  };
+
+  const generateLinks = () => {
+    if (!songList.trim()) {
+      alert('Please enter at least one song');
+      return;
+    }
+
+    const songs = songList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+
+    if (songs.length === 0) {
+      alert('Please enter at least one song');
+      return;
+    }
+
+    const links = [];
+
+    if (platform === 'spotify') {
+      songs.forEach(song => {
+        const searchQuery = encodeURIComponent(song);
+        links.push({
+          song,
+          url: `https://open.spotify.com/search/${searchQuery}`,
+          instruction: 'Search and add to playlist'
+        });
+      });
+    } else if (platform === 'youtube') {
+      songs.forEach(song => {
+        const searchQuery = encodeURIComponent(song);
+        links.push({
+          song,
+          url: `https://music.youtube.com/search?q=${searchQuery}`,
+          instruction: 'Search and add to playlist'
+        });
+      });
+    } else if (platform === 'apple') {
+      songs.forEach(song => {
+        const searchQuery = encodeURIComponent(song);
+        links.push({
+          song,
+          url: `https://music.apple.com/us/search?term=${searchQuery}`,
+          instruction: 'Search and add to library/playlist'
+        });
+      });
+    }
+
+    setGeneratedLinks(links);
+    setShowResults(true);
+  };
+
+  const copyAllSongs = () => {
+    const text = generatedLinks.map(link => link.song).join('\n');
+    navigator.clipboard.writeText(text);
+    alert('Song list copied to clipboard!');
+  };
+
+  const platformInstructions = {
+    spotify: [
+      '1. Make sure you\'re logged into Spotify',
+      '2. Create a new playlist in Spotify',
+      '3. Click each search link below',
+      '4. Find the correct song and click "Add to playlist"'
+    ],
+    youtube: [
+      '1. Make sure you\'re logged into YouTube Music',
+      '2. Create a new playlist in YouTube Music',
+      '3. Click each search link below',
+      '4. Find the correct song and add it to your playlist'
+    ],
+    apple: [
+      '1. Make sure you\'re logged into Apple Music',
+      '2. Create a new playlist in Apple Music',
+      '3. Click each search link below',
+      '4. Find the correct song and add it to your library/playlist'
+    ]
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-6">
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <Music className="w-12 h-12 text-purple-300" />
+            <h1 className="text-4xl font-bold text-white">Playlist Generator</h1>
+          </div>
+          <p className="text-purple-200">Create playlists for Spotify, YouTube Music, or Apple Music</p>
+        </div>
+
+        {!showResults ? (
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl">
+            <div className="space-y-6">
+              <div>
+                <label className="block text-white font-semibold mb-2">
+                  Playlist Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={playlistName}
+                  onChange={(e) => setPlaylistName(e.target.value)}
+                  placeholder="My Awesome Playlist"
+                  className="w-full px-4 py-3 rounded-lg bg-white/20 text-white placeholder-purple-200 border-2 border-purple-300/30 focus:border-purple-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white font-semibold mb-2">
+                  Choose Platform
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    onClick={() => {
+                      setPlatform('spotify');
+                      setIsAuthenticated(false);
+                      setAccessToken(null);
+                    }}
+                    className={`px-4 py-3 rounded-lg font-semibold transition-all ${
+                      platform === 'spotify'
+                        ? 'bg-green-500 text-white shadow-lg scale-105'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    Spotify
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPlatform('youtube');
+                      setIsAuthenticated(false);
+                      setAccessToken(null);
+                    }}
+                    className={`px-4 py-3 rounded-lg font-semibold transition-all ${
+                      platform === 'youtube'
+                        ? 'bg-red-500 text-white shadow-lg scale-105'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    YouTube
+                  </button>
+                  <button
+                    onClick={() => setPlatform('apple')}
+                    className={`px-4 py-3 rounded-lg font-semibold transition-all ${
+                      platform === 'apple'
+                        ? 'bg-pink-500 text-white shadow-lg scale-105'
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    Apple Music
+                  </button>
+                </div>
+              </div>
+
+              {(platform === 'spotify' || platform === 'youtube') && !isAuthenticated && (
+                <div className="bg-yellow-500/20 border border-yellow-300/50 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-yellow-100 font-semibold mb-2">
+                        Auto-create playlist feature available!
+                      </p>
+                      <p className="text-yellow-100 text-sm mb-3">
+                        Connect your {platform === 'spotify' ? 'Spotify' : 'YouTube'} account to automatically create playlists
+                      </p>
+                      <button
+                        onClick={platform === 'spotify' ? authenticateSpotify : authenticateYouTube}
+                        className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-all font-semibold"
+                      >
+                        <LogIn className="w-4 h-4" />
+                        Connect {platform === 'spotify' ? 'Spotify' : 'YouTube'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isAuthenticated && (
+                <div className="bg-green-500/20 border border-green-300/50 rounded-lg p-4">
+                  <div className="flex items-center gap-3">
+                    <Check className="w-5 h-5 text-green-300" />
+                    <p className="text-green-100 font-semibold">
+                      Connected to {platform === 'spotify' ? 'Spotify' : 'YouTube'}!
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-white font-semibold mb-2">
+                  Paste Your Songs (One per line)
+                </label>
+                <textarea
+                  value={songList}
+                  onChange={(e) => setSongList(e.target.value)}
+                  placeholder="Enter song names, one per line:&#10;Bohemian Rhapsody - Queen&#10;Hotel California - Eagles&#10;Stairway to Heaven - Led Zeppelin"
+                  rows={12}
+                  className="w-full px-4 py-3 rounded-lg bg-white/20 text-white placeholder-purple-200 border-2 border-purple-300/30 focus:border-purple-400 focus:outline-none font-mono text-sm"
+                />
+              </div>
+
+              {isAuthenticated && (platform === 'spotify' || platform === 'youtube') ? (
+                <button
+                  onClick={platform === 'spotify' ? createSpotifyPlaylist : createYouTubePlaylist}
+                  disabled={isCreating}
+                  className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold py-4 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isCreating ? 'Creating Playlist...' : '✨ Auto-Create Playlist'}
+                </button>
+              ) : (
+                <button
+                  onClick={generateLinks}
+                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold py-4 rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg hover:shadow-xl transform hover:scale-105"
+                >
+                  Generate Playlist Links
+                </button>
+              )}
+
+              {creationStatus.length > 0 && (
+                <div className="bg-white/10 rounded-lg p-4 max-h-64 overflow-y-auto">
+                  <p className="text-white font-semibold mb-2">Status:</p>
+                  <div className="space-y-1 text-sm">
+                    {creationStatus.map((status, i) => (
+                      <p key={i} className="text-purple-200 font-mono">{status}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-white">
+                {playlistName || 'Your Playlist'} ({generatedLinks.length} songs)
+              </h2>
+              <button
+                onClick={() => setShowResults(false)}
+                className="px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all"
+              >
+                ← Back
+              </button>
+            </div>
+
+            <div className="bg-blue-500/20 border border-blue-300/50 rounded-lg p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-blue-300 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-blue-100">
+                  <p className="font-semibold mb-2">How to create your playlist:</p>
+                  <ul className="space-y-1">
+                    {platformInstructions[platform].map((instruction, i) => (
+                      <li key={i}>{instruction}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4 flex gap-3">
+              <button
+                onClick={copyAllSongs}
+                className="flex items-center gap-2 px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 transition-all"
+              >
+                <Copy className="w-4 h-4" />
+                Copy All Song Names
+              </button>
+              <button
+                onClick={() => {
+                  generatedLinks.forEach(link => {
+                    window.open(link.url, '_blank');
+                  });
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-all"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open All Tabs ({generatedLinks.length})
+              </button>
+            </div>
+
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {generatedLinks.map((link, index) => (
+                <div
+                  key={index}
+                  className="bg-white/10 rounded-lg p-4 hover:bg-white/20 transition-all"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="text-white font-semibold">{link.song}</p>
+                      <p className="text-purple-200 text-sm">{link.instruction}</p>
+                    </div>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-all ml-4"
+                    >
+                      Open <ExternalLink className="w-4 h-4" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
