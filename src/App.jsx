@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Music, Copy, ExternalLink, AlertCircle, LogIn, Check } from 'lucide-react';
+import { Music, Copy, ExternalLink, AlertCircle, LogIn, Check, Loader } from 'lucide-react';
 
 export default function PlaylistGenerator() {
   const [songList, setSongList] = useState('');
@@ -14,11 +14,10 @@ export default function PlaylistGenerator() {
 
   // Spotify credentials
   const SPOTIFY_CLIENT_ID = '0703160cab2f44d1b203fe558f9de57f';
-  const SPOTIFY_CLIENT_SECRET = '51a561be6e6e428bbb52571b07099324';
   
   // YouTube credentials
   const YOUTUBE_CLIENT_ID = '690518057226-3ssmo3irbqnbpr8irq62e6ifoeep35j5.apps.googleusercontent.com';
-  const YOUTUBE_CLIENT_SECRET = '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';
+  const YOUTUBE_API_KEY = 'AIzaSyDummy'; // You'll need a valid API key
   
   const REDIRECT_URI = window.location.origin + window.location.pathname;
 
@@ -53,7 +52,7 @@ export default function PlaylistGenerator() {
         body: new URLSearchParams({
           code,
           client_id: YOUTUBE_CLIENT_ID,
-          client_secret: YOUTUBE_CLIENT_SECRET,
+          client_secret: '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',
           redirect_uri: REDIRECT_URI,
           grant_type: 'authorization_code'
         })
@@ -65,6 +64,7 @@ export default function PlaylistGenerator() {
       }
     } catch (error) {
       console.error('Error exchanging code:', error);
+      setCreationStatus(prev => [...prev, `â Error authenticating: ${error.message}`]);
     }
   };
 
@@ -76,11 +76,16 @@ export default function PlaylistGenerator() {
 
   const authenticateYouTube = () => {
     const scopes = 'https://www.googleapis.com/auth/youtube';
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${YOUTUBE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline`;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${YOUTUBE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent`;
     window.location.href = authUrl;
   };
 
   const createSpotifyPlaylist = async () => {
+    if (!songList.trim()) {
+      alert('Please enter at least one song');
+      return;
+    }
+
     setIsCreating(true);
     setCreationStatus([]);
     
@@ -88,14 +93,19 @@ export default function PlaylistGenerator() {
       const songs = songList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
       
       // Get user ID
-      setCreationStatus(prev => [...prev, 'Getting your Spotify profile...']);
+      setCreationStatus(prev => [...prev, 'đ Getting your Spotify profile...']);
       const userResponse = await fetch('https://api.spotify.com/v1/me', {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
+      
+      if (!userResponse.ok) {
+        throw new Error('Failed to get user profile. Please try reconnecting.');
+      }
+      
       const userData = await userResponse.json();
       
       // Create playlist
-      setCreationStatus(prev => [...prev, 'Creating playlist...']);
+      setCreationStatus(prev => [...prev, 'đ Creating playlist...']);
       const playlistResponse = await fetch(`https://api.spotify.com/v1/users/${userData.id}/playlists`, {
         method: 'POST',
         headers: {
@@ -108,12 +118,17 @@ export default function PlaylistGenerator() {
           public: false
         })
       });
+      
+      if (!playlistResponse.ok) {
+        throw new Error('Failed to create playlist');
+      }
+      
       const playlistData = await playlistResponse.json();
       
       // Search and add tracks
       const trackUris = [];
       for (const song of songs) {
-        setCreationStatus(prev => [...prev, `Searching for: ${song}`]);
+        setCreationStatus(prev => [...prev, `đ Searching for: ${song}`]);
         const searchResponse = await fetch(
           `https://api.spotify.com/v1/search?q=${encodeURIComponent(song)}&type=track&limit=1`,
           { headers: { 'Authorization': `Bearer ${accessToken}` } }
@@ -122,15 +137,15 @@ export default function PlaylistGenerator() {
         
         if (searchData.tracks?.items?.[0]) {
           trackUris.push(searchData.tracks.items[0].uri);
-          setCreationStatus(prev => [...prev, `â Found: ${song}`]);
+          setCreationStatus(prev => [...prev, `â Found: ${song}`]);
         } else {
-          setCreationStatus(prev => [...prev, `â Not found: ${song}`]);
+          setCreationStatus(prev => [...prev, `â Not found: ${song}`]);
         }
       }
       
       // Add tracks to playlist
       if (trackUris.length > 0) {
-        setCreationStatus(prev => [...prev, `Adding ${trackUris.length} tracks to playlist...`]);
+        setCreationStatus(prev => [...prev, `đľ Adding ${trackUris.length} tracks to playlist...`]);
         await fetch(`https://api.spotify.com/v1/playlists/${playlistData.id}/tracks`, {
           method: 'POST',
           headers: {
@@ -140,17 +155,25 @@ export default function PlaylistGenerator() {
           body: JSON.stringify({ uris: trackUris })
         });
         
-        setCreationStatus(prev => [...prev, `â Playlist created successfully!`]);
-        setCreationStatus(prev => [...prev, `Open it here: ${playlistData.external_urls.spotify}`]);
+        setCreationStatus(prev => [...prev, '']);
+        setCreationStatus(prev => [...prev, `đ Playlist created successfully!`]);
+        setCreationStatus(prev => [...prev, `đ ${playlistData.external_urls.spotify}`]);
+      } else {
+        setCreationStatus(prev => [...prev, 'â No tracks found. Please check your song names.']);
       }
     } catch (error) {
-      setCreationStatus(prev => [...prev, `Error: ${error.message}`]);
+      setCreationStatus(prev => [...prev, `â Error: ${error.message}`]);
     }
     
     setIsCreating(false);
   };
 
   const createYouTubePlaylist = async () => {
+    if (!songList.trim()) {
+      alert('Please enter at least one song');
+      return;
+    }
+
     setIsCreating(true);
     setCreationStatus([]);
     
@@ -158,7 +181,7 @@ export default function PlaylistGenerator() {
       const songs = songList.split('\n').map(s => s.trim()).filter(s => s.length > 0);
       
       // Create playlist
-      setCreationStatus(prev => [...prev, 'Creating YouTube playlist...']);
+      setCreationStatus(prev => [...prev, 'đ Creating YouTube playlist...']);
       const playlistResponse = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status', {
         method: 'POST',
         headers: {
@@ -173,20 +196,26 @@ export default function PlaylistGenerator() {
           status: { privacyStatus: 'private' }
         })
       });
+      
+      if (!playlistResponse.ok) {
+        throw new Error('Failed to create playlist');
+      }
+      
       const playlistData = await playlistResponse.json();
       
       // Search and add videos
+      let addedCount = 0;
       for (const song of songs) {
-        setCreationStatus(prev => [...prev, `Searching for: ${song}`]);
+        setCreationStatus(prev => [...prev, `đ Searching for: ${song}`]);
         const searchResponse = await fetch(
-          `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(song + ' music')}&type=video&videoCategoryId=10&maxResults=1&key=${YOUTUBE_CLIENT_ID}`,
+          `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(song + ' music')}&type=video&videoCategoryId=10&maxResults=1`,
           { headers: { 'Authorization': `Bearer ${accessToken}` } }
         );
         const searchData = await searchResponse.json();
         
         if (searchData.items?.[0]) {
           const videoId = searchData.items[0].id.videoId;
-          await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
+          const addResponse = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${accessToken}`,
@@ -202,15 +231,23 @@ export default function PlaylistGenerator() {
               }
             })
           });
-          setCreationStatus(prev => [...prev, `â Added: ${song}`]);
+          
+          if (addResponse.ok) {
+            addedCount++;
+            setCreationStatus(prev => [...prev, `â Added: ${song}`]);
+          } else {
+            setCreationStatus(prev => [...prev, `â Failed to add: ${song}`]);
+          }
         } else {
-          setCreationStatus(prev => [...prev, `â Not found: ${song}`]);
+          setCreationStatus(prev => [...prev, `â Not found: ${song}`]);
         }
       }
       
-      setCreationStatus(prev => [...prev, `â Playlist created successfully!`]);
+      setCreationStatus(prev => [...prev, '']);
+      setCreationStatus(prev => [...prev, `đ Playlist created successfully with ${addedCount} songs!`]);
+      setCreationStatus(prev => [...prev, `đ https://music.youtube.com/playlist?list=${playlistData.id}`]);
     } catch (error) {
-      setCreationStatus(prev => [...prev, `Error: ${error.message}`]);
+      setCreationStatus(prev => [...prev, `â Error: ${error.message}`]);
     }
     
     setIsCreating(false);
@@ -328,6 +365,7 @@ export default function PlaylistGenerator() {
                       setPlatform('spotify');
                       setIsAuthenticated(false);
                       setAccessToken(null);
+                      setCreationStatus([]);
                     }}
                     className={`px-4 py-3 rounded-lg font-semibold transition-all ${
                       platform === 'spotify'
@@ -342,6 +380,7 @@ export default function PlaylistGenerator() {
                       setPlatform('youtube');
                       setIsAuthenticated(false);
                       setAccessToken(null);
+                      setCreationStatus([]);
                     }}
                     className={`px-4 py-3 rounded-lg font-semibold transition-all ${
                       platform === 'youtube'
@@ -352,7 +391,10 @@ export default function PlaylistGenerator() {
                     YouTube
                   </button>
                   <button
-                    onClick={() => setPlatform('apple')}
+                    onClick={() => {
+                      setPlatform('apple');
+                      setCreationStatus([]);
+                    }}
                     className={`px-4 py-3 rounded-lg font-semibold transition-all ${
                       platform === 'apple'
                         ? 'bg-pink-500 text-white shadow-lg scale-105'
@@ -364,37 +406,39 @@ export default function PlaylistGenerator() {
                 </div>
               </div>
 
-              {(platform === 'spotify' || platform === 'youtube') && !isAuthenticated && (
-                <div className="bg-yellow-500/20 border border-yellow-300/50 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="text-yellow-100 font-semibold mb-2">
-                        Auto-create playlist feature available!
-                      </p>
-                      <p className="text-yellow-100 text-sm mb-3">
-                        Connect your {platform === 'spotify' ? 'Spotify' : 'YouTube'} account to automatically create playlists
-                      </p>
-                      <button
-                        onClick={platform === 'spotify' ? authenticateSpotify : authenticateYouTube}
-                        className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-all font-semibold"
-                      >
-                        <LogIn className="w-4 h-4" />
-                        Connect {platform === 'spotify' ? 'Spotify' : 'YouTube'}
-                      </button>
+              {(platform === 'spotify' || platform === 'youtube') && (
+                <div>
+                  {!isAuthenticated ? (
+                    <div className="bg-yellow-500/20 border border-yellow-300/50 rounded-lg p-4">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <p className="text-yellow-100 font-semibold mb-2">
+                            Auto-create playlist feature available!
+                          </p>
+                          <p className="text-yellow-100 text-sm mb-3">
+                            Connect your {platform === 'spotify' ? 'Spotify' : 'YouTube'} account to automatically create playlists
+                          </p>
+                          <button
+                            onClick={platform === 'spotify' ? authenticateSpotify : authenticateYouTube}
+                            className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-all font-semibold"
+                          >
+                            <LogIn className="w-4 h-4" />
+                            Connect {platform === 'spotify' ? 'Spotify' : 'YouTube'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              {isAuthenticated && (
-                <div className="bg-green-500/20 border border-green-300/50 rounded-lg p-4">
-                  <div className="flex items-center gap-3">
-                    <Check className="w-5 h-5 text-green-300" />
-                    <p className="text-green-100 font-semibold">
-                      Connected to {platform === 'spotify' ? 'Spotify' : 'YouTube'}!
-                    </p>
-                  </div>
+                  ) : (
+                    <div className="bg-green-500/20 border border-green-300/50 rounded-lg p-4">
+                      <div className="flex items-center gap-3">
+                        <Check className="w-5 h-5 text-green-300" />
+                        <p className="text-green-100 font-semibold">
+                          Connected to {platform === 'spotify' ? 'Spotify' : 'YouTube'}! Ready to create playlists.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -415,16 +459,23 @@ export default function PlaylistGenerator() {
                 <button
                   onClick={platform === 'spotify' ? createSpotifyPlaylist : createYouTubePlaylist}
                   disabled={isCreating}
-                  className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold py-4 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold py-4 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
-                  {isCreating ? 'Creating Playlist...' : 'â¨ Auto-Create Playlist'}
+                  {isCreating ? (
+                    <>
+                      <Loader className="w-5 h-5 animate-spin" />
+                      Creating Playlist...
+                    </>
+                  ) : (
+                    <>â¨ Auto-Create Playlist</>
+                  )}
                 </button>
               ) : (
                 <button
                   onClick={generateLinks}
                   className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold py-4 rounded-lg hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg hover:shadow-xl transform hover:scale-105"
                 >
-                  Generate Playlist Links
+                  Generate Search Links
                 </button>
               )}
 
@@ -433,7 +484,7 @@ export default function PlaylistGenerator() {
                   <p className="text-white font-semibold mb-2">Status:</p>
                   <div className="space-y-1 text-sm">
                     {creationStatus.map((status, i) => (
-                      <p key={i} className="text-purple-200 font-mono">{status}</p>
+                      <p key={i} className="text-purple-200 font-mono break-all">{status}</p>
                     ))}
                   </div>
                 </div>
