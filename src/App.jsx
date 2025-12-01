@@ -7,8 +7,13 @@ export default function PlaylistGenerator() {
   const [platform, setPlatform] = useState('spotify');
   const [generatedLinks, setGeneratedLinks] = useState([]);
   const [showResults, setShowResults] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [accessToken, setAccessToken] = useState(null);
+  
+  // Separate authentication states for each platform
+  const [spotifyAuthenticated, setSpotifyAuthenticated] = useState(false);
+  const [youtubeAuthenticated, setYoutubeAuthenticated] = useState(false);
+  const [spotifyToken, setSpotifyToken] = useState(null);
+  const [youtubeToken, setYoutubeToken] = useState(null);
+  
   const [isCreating, setIsCreating] = useState(false);
   const [creationStatus, setCreationStatus] = useState([]);
 
@@ -17,7 +22,7 @@ export default function PlaylistGenerator() {
   
   // YouTube credentials
   const YOUTUBE_CLIENT_ID = '690518057226-3ssmo3irbqnbpr8irq62e6ifoeep35j5.apps.googleusercontent.com';
-  const YOUTUBE_API_KEY = 'AIzaSyDummy'; // You'll need a valid API key
+  const YOUTUBE_CLIENT_SECRET = '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';
   
   const REDIRECT_URI = window.location.origin + window.location.pathname;
 
@@ -26,20 +31,22 @@ export default function PlaylistGenerator() {
     const hash = window.location.hash;
     const params = new URLSearchParams(window.location.search);
     
+    // Handle Spotify OAuth (hash-based)
     if (hash) {
       const token = new URLSearchParams(hash.substring(1)).get('access_token');
-      if (token) {
-        setAccessToken(token);
-        setIsAuthenticated(true);
+      const state = new URLSearchParams(hash.substring(1)).get('state');
+      
+      if (token && state === 'spotify') {
+        setSpotifyToken(token);
+        setSpotifyAuthenticated(true);
         window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
     
-    if (params.get('code')) {
+    // Handle YouTube OAuth (code-based)
+    if (params.get('code') && params.get('state') === 'youtube') {
       const code = params.get('code');
-      if (platform === 'youtube') {
-        exchangeYouTubeCode(code);
-      }
+      exchangeYouTubeCode(code);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -52,15 +59,15 @@ export default function PlaylistGenerator() {
         body: new URLSearchParams({
           code,
           client_id: YOUTUBE_CLIENT_ID,
-          client_secret: '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',
+          client_secret: YOUTUBE_CLIENT_SECRET,
           redirect_uri: REDIRECT_URI,
           grant_type: 'authorization_code'
         })
       });
       const data = await response.json();
       if (data.access_token) {
-        setAccessToken(data.access_token);
-        setIsAuthenticated(true);
+        setYoutubeToken(data.access_token);
+        setYoutubeAuthenticated(true);
       }
     } catch (error) {
       console.error('Error exchanging code:', error);
@@ -70,13 +77,13 @@ export default function PlaylistGenerator() {
 
   const authenticateSpotify = () => {
     const scopes = 'playlist-modify-public playlist-modify-private';
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}`;
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&state=spotify`;
     window.location.href = authUrl;
   };
 
   const authenticateYouTube = () => {
     const scopes = 'https://www.googleapis.com/auth/youtube';
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${YOUTUBE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent`;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${YOUTUBE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&state=youtube`;
     window.location.href = authUrl;
   };
 
@@ -95,7 +102,7 @@ export default function PlaylistGenerator() {
       // Get user ID
       setCreationStatus(prev => [...prev, 'đ Getting your Spotify profile...']);
       const userResponse = await fetch('https://api.spotify.com/v1/me', {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
+        headers: { 'Authorization': `Bearer ${spotifyToken}` }
       });
       
       if (!userResponse.ok) {
@@ -109,7 +116,7 @@ export default function PlaylistGenerator() {
       const playlistResponse = await fetch(`https://api.spotify.com/v1/users/${userData.id}/playlists`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${spotifyToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -131,7 +138,7 @@ export default function PlaylistGenerator() {
         setCreationStatus(prev => [...prev, `đ Searching for: ${song}`]);
         const searchResponse = await fetch(
           `https://api.spotify.com/v1/search?q=${encodeURIComponent(song)}&type=track&limit=1`,
-          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+          { headers: { 'Authorization': `Bearer ${spotifyToken}` } }
         );
         const searchData = await searchResponse.json();
         
@@ -149,7 +156,7 @@ export default function PlaylistGenerator() {
         await fetch(`https://api.spotify.com/v1/playlists/${playlistData.id}/tracks`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
+            'Authorization': `Bearer ${spotifyToken}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({ uris: trackUris })
@@ -185,7 +192,7 @@ export default function PlaylistGenerator() {
       const playlistResponse = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${youtubeToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -209,7 +216,7 @@ export default function PlaylistGenerator() {
         setCreationStatus(prev => [...prev, `đ Searching for: ${song}`]);
         const searchResponse = await fetch(
           `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(song + ' music')}&type=video&videoCategoryId=10&maxResults=1`,
-          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+          { headers: { 'Authorization': `Bearer ${youtubeToken}` } }
         );
         const searchData = await searchResponse.json();
         
@@ -218,7 +225,7 @@ export default function PlaylistGenerator() {
           const addResponse = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${accessToken}`,
+              'Authorization': `Bearer ${youtubeToken}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -328,6 +335,13 @@ export default function PlaylistGenerator() {
     ]
   };
 
+  // Get current platform's authentication status
+  const isCurrentPlatformAuthenticated = () => {
+    if (platform === 'spotify') return spotifyAuthenticated;
+    if (platform === 'youtube') return youtubeAuthenticated;
+    return false;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-6">
       <div className="max-w-4xl mx-auto">
@@ -363,8 +377,6 @@ export default function PlaylistGenerator() {
                   <button
                     onClick={() => {
                       setPlatform('spotify');
-                      setIsAuthenticated(false);
-                      setAccessToken(null);
                       setCreationStatus([]);
                     }}
                     className={`px-4 py-3 rounded-lg font-semibold transition-all ${
@@ -378,8 +390,6 @@ export default function PlaylistGenerator() {
                   <button
                     onClick={() => {
                       setPlatform('youtube');
-                      setIsAuthenticated(false);
-                      setAccessToken(null);
                       setCreationStatus([]);
                     }}
                     className={`px-4 py-3 rounded-lg font-semibold transition-all ${
@@ -406,9 +416,20 @@ export default function PlaylistGenerator() {
                 </div>
               </div>
 
-              {(platform === 'spotify' || platform === 'youtube') && (
+              {/* Connection Status for All Platforms */}
+              <div className="space-y-3">
+                {/* Spotify Connection Status */}
                 <div>
-                  {!isAuthenticated ? (
+                  {spotifyAuthenticated ? (
+                    <div className="bg-green-500/20 border border-green-300/50 rounded-lg p-4">
+                      <div className="flex items-center gap-3">
+                        <Check className="w-5 h-5 text-green-300" />
+                        <p className="text-green-100 font-semibold">
+                          Spotify Connected
+                        </p>
+                      </div>
+                    </div>
+                  ) : platform === 'spotify' && (
                     <div className="bg-yellow-500/20 border border-yellow-300/50 rounded-lg p-4">
                       <div className="flex items-start gap-3">
                         <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
@@ -417,30 +438,56 @@ export default function PlaylistGenerator() {
                             Auto-create playlist feature available!
                           </p>
                           <p className="text-yellow-100 text-sm mb-3">
-                            Connect your {platform === 'spotify' ? 'Spotify' : 'YouTube'} account to automatically create playlists
+                            Connect your Spotify account to automatically create playlists
                           </p>
                           <button
-                            onClick={platform === 'spotify' ? authenticateSpotify : authenticateYouTube}
+                            onClick={authenticateSpotify}
                             className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-all font-semibold"
                           >
                             <LogIn className="w-4 h-4" />
-                            Connect {platform === 'spotify' ? 'Spotify' : 'YouTube'}
+                            Connect Spotify
                           </button>
                         </div>
                       </div>
                     </div>
-                  ) : (
+                  )}
+                </div>
+
+                {/* YouTube Connection Status */}
+                <div>
+                  {youtubeAuthenticated ? (
                     <div className="bg-green-500/20 border border-green-300/50 rounded-lg p-4">
                       <div className="flex items-center gap-3">
                         <Check className="w-5 h-5 text-green-300" />
                         <p className="text-green-100 font-semibold">
-                          Connected to {platform === 'spotify' ? 'Spotify' : 'YouTube'}! Ready to create playlists.
+                          YouTube Connected
                         </p>
+                      </div>
+                    </div>
+                  ) : platform === 'youtube' && (
+                    <div className="bg-yellow-500/20 border border-yellow-300/50 rounded-lg p-4">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                          <p className="text-yellow-100 font-semibold mb-2">
+                            Auto-create playlist feature available!
+                          </p>
+                          <p className="text-yellow-100 text-sm mb-3">
+                            Connect your YouTube account to automatically create playlists
+                          </p>
+                          <button
+                            onClick={authenticateYouTube}
+                            className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-all font-semibold"
+                          >
+                            <LogIn className="w-4 h-4" />
+                            Connect YouTube
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
                 </div>
-              )}
+              </div>
 
               <div>
                 <label className="block text-white font-semibold mb-2">
@@ -455,7 +502,7 @@ export default function PlaylistGenerator() {
                 />
               </div>
 
-              {isAuthenticated && (platform === 'spotify' || platform === 'youtube') ? (
+              {isCurrentPlatformAuthenticated() && (platform === 'spotify' || platform === 'youtube') ? (
                 <button
                   onClick={platform === 'spotify' ? createSpotifyPlaylist : createYouTubePlaylist}
                   disabled={isCreating}
@@ -467,7 +514,7 @@ export default function PlaylistGenerator() {
                       Creating Playlist...
                     </>
                   ) : (
-                    <>â¨ Auto-Create Playlist</>
+                    <>â¨ Auto-Create Playlist in {platform === 'spotify' ? 'Spotify' : 'YouTube'}</>
                   )}
                 </button>
               ) : (
